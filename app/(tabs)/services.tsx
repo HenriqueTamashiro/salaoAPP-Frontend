@@ -1,90 +1,51 @@
-import React, { useState } from 'react';
-import { ScrollView, View, StyleSheet, TouchableOpacity, Image } from 'react-native';
-import Text from '@/components/ui/Text';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Clock } from 'lucide-react-native';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
-import Colors from '@/constants/Colors';
-import { useRouter } from 'expo-router';
-import { Clock, DollarSign } from 'lucide-react-native';
+import Text from '@/components/ui/Text';
 import { RealSign } from '@/components/ui/RealSign';
+import Colors from '@/constants/Colors';
+import { Service, ServiceCategory, listServices } from '@/lib/api';
+
+const categories: Array<{ id: 'all' | Lowercase<ServiceCategory>; name: string; apiCategory?: ServiceCategory }> = [
+  { id: 'all', name: 'Todos os serviços' },
+  { id: 'hair', name: 'Cortes', apiCategory: 'HAIR' },
+  { id: 'nails', name: 'Unhas', apiCategory: 'NAILS' },
+  { id: 'face', name: 'Facial', apiCategory: 'FACE' },
+  { id: 'massage', name: 'Massagem', apiCategory: 'MASSAGE' },
+  { id: 'makeup', name: 'Maquiagem', apiCategory: 'MAKEUP' },
+];
 
 export default function ServicesScreen() {
   const router = useRouter();
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [activeCategory, setActiveCategory] = useState<(typeof categories)[number]['id']>('all');
+  const [services, setServices] = useState<Service[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const categories = [
-    { id: 'all', name: 'Todos os serviços' },
-    { id: 'hair', name: 'Cortes' },
-    { id: 'nails', name: 'Unhas' },
-    { id: 'face', name: 'Facial' },
-    { id: 'massage', name: 'Massagem' },
-    { id: 'makeup', name: 'Maquiagem' },
-  ];
+  useEffect(() => {
+    async function loadServices() {
+      setIsLoading(true);
+      setError(null);
 
-  const services = [
-    {
-      id: '1',
-      title: 'Corte de cabelo e estilo feminino',
-      description: 'Inclui consulta, lavagem, corte e escova para estilização',
-      price: 45,
-      time: '45 min',
-      category: 'hair',
-      image: 'https://images.pexels.com/photos/3993320/pexels-photo-3993320.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    },
-    {
-      id: '2',
-      title: 'Corte de cabelo masculino',
-      description: 'Corte clássico com estilo e acabamento',
-      price: 30,
-      time: '30 min',
-      category: 'hair',
-      image: 'https://images.pexels.com/photos/3998417/pexels-photo-3998417.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    },
-    {
-      id: '3',
-      title: 'Coloração',
-      description: 'Processo de coloração com produtos profissionais',
-      price: 85,
-      time: '90 min',
-      category: 'hair',
-      image: 'https://images.pexels.com/photos/3993123/pexels-photo-3993123.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    },
-    {
-      id: '4',
-      title: 'Manicure',
-      description: 'Modelagem de unhas, cuidados com cutículas, massagem nas mãos e polimento',
-      price: 35,
-      time: '45 min',
-      category: 'nails',
-      image: 'https://images.pexels.com/photos/939836/pexels-photo-939836.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    },
-    {
-      id: '5',
-      title: 'Pedicure',
-      description: 'Tratamento de spa para os pés',
-      price: 55,
-      time: '60 min',
-      category: 'nails',
-      image: 'https://images.pexels.com/photos/3997385/pexels-photo-3997385.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    },
-    {
-      id: '6',
-      title: 'Hidratação Facial',
-      description: 'Tratamento de limpeza profunda e hidratação para todos os tipos de pele',
-      price: 70,
-      time: '60 min',
-      category: 'face',
-      image: 'https://images.pexels.com/photos/3985329/pexels-photo-3985329.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    },
-  ];
+      try {
+        const category = categories.find((item) => item.id === activeCategory)?.apiCategory;
+        const response = await listServices(category);
+        setServices(response.services);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar os serviços');
+      } finally {
+        setIsLoading(false);
+      }
+    }
 
-  const filteredServices = activeCategory === 'all' 
-    ? services 
-    : services.filter(service => service.category === activeCategory);
+    loadServices();
+  }, [activeCategory]);
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text variant="h2" weight="semibold">
           Nossos Serviços
@@ -94,74 +55,110 @@ export default function ServicesScreen() {
         </Text>
       </View>
 
-      {/* Categories */}
       <View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoriesContainer}
-      >
-        {categories.map((category) => (
-          <TouchableOpacity
-            key={category.id}
-            style={[
-              styles.categoryButton,
-              activeCategory === category.id && styles.categoryButtonActive,
-            ]}
-            onPress={() => setActiveCategory(category.id)}
-          >
-            <Text
-              variant="body"
-              color={activeCategory === category.id ? 'white' : 'secondary'}
-              weight={activeCategory === category.id ? 'medium' : 'regular'}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoriesContainer}
+        >
+          {categories.map((category) => (
+            <TouchableOpacity
+              key={category.id}
+              style={[
+                styles.categoryButton,
+                activeCategory === category.id && styles.categoryButtonActive,
+              ]}
+              onPress={() => setActiveCategory(category.id)}
             >
-              {category.name}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-        </View>
+              <Text
+                variant="body"
+                color={activeCategory === category.id ? 'white' : 'secondary'}
+                weight={activeCategory === category.id ? 'medium' : 'regular'}
+              >
+                {category.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
-      {/* Services List */}
       <ScrollView showsVerticalScrollIndicator={false} style={styles.servicesContainer}>
-        {filteredServices.map((service) => (
-          <Card key={service.id} style={styles.serviceCard} variant="elevated">
-            <View style={styles.serviceContent}>
-              <View style={styles.serviceTextContent}>
-                <Text variant="h4" weight="semibold">
-                  {service.title}
-                </Text>
-                <Text variant="bodySmall" color="secondary" style={styles.serviceDescription}>
-                  {service.description}
-                </Text>
-                
-                <View style={styles.serviceMetaContainer}>
-                  <View style={styles.serviceMeta}>
-                   <RealSign size={16} color={Colors.neutral[600]} />
-                    <Text variant="body" color="secondary" style={styles.serviceMetaText}>
-                      {service.price}
-                      
-                    </Text>
+        {isLoading ? (
+          <View style={styles.feedbackContainer}>
+            <ActivityIndicator color={Colors.primary[500]} size="large" />
+            <Text variant="body" color="secondary" style={styles.feedbackText}>
+              Carregando serviços...
+            </Text>
+          </View>
+        ) : null}
+
+        {!isLoading && error ? (
+          <Card style={styles.feedbackCard}>
+            <Text variant="body" color="error">
+              {error}
+            </Text>
+          </Card>
+        ) : null}
+
+        {!isLoading && !error && services.length === 0 ? (
+          <Card style={styles.feedbackCard}>
+            <Text variant="body" color="secondary">
+              Nenhum serviço disponível nesta categoria no momento.
+            </Text>
+          </Card>
+        ) : null}
+
+        {!isLoading &&
+          !error &&
+          services.map((service) => (
+            <Card key={service.id} style={styles.serviceCard} variant="elevated">
+              <View style={styles.serviceContent}>
+                <View style={styles.serviceTextContent}>
+                  <Text variant="h4" weight="semibold">
+                    {service.title}
+                  </Text>
+                  <Text variant="bodySmall" color="secondary" style={styles.serviceDescription}>
+                    {service.description}
+                  </Text>
+
+                  <View style={styles.serviceMetaContainer}>
+                    <View style={styles.serviceMeta}>
+                      <RealSign size={16} color={Colors.neutral[600]} />
+                      <Text variant="body" color="secondary" style={styles.serviceMetaText}>
+                        {Number(service.price).toFixed(2)}
+                      </Text>
+                    </View>
+
+                    <View style={styles.serviceMeta}>
+                      <Clock size={16} color={Colors.neutral[600]} />
+                      <Text variant="body" color="secondary" style={styles.serviceMetaText}>
+                        {service.durationMin} min
+                      </Text>
+                    </View>
                   </View>
-                  
-                  <View style={styles.serviceMeta}>
-                    <Clock size={16} color={Colors.neutral[600]} />
-                    <Text variant="body" color="secondary" style={styles.serviceMetaText}>
-                      {service.time}
-                    </Text>
-                  </View>
+
+                  <Button
+                    title="Agende Agora"
+                    onPress={() =>
+                      router.push({
+                        pathname: '/appointments',
+                        params: { serviceId: service.id },
+                      })
+                    }
+                    style={styles.bookButton}
+                  />
                 </View>
-                
-                <Button
-                  title="Agende Agora"
-                  onPress={() => router.push('/appointments')}
-                  style={styles.bookButton}
+                <Image
+                  source={{
+                    uri:
+                      service.imageUrl ??
+                      'https://images.pexels.com/photos/3993320/pexels-photo-3993320.jpeg?auto=compress&cs=tinysrgb&w=600',
+                  }}
+                  style={styles.serviceImage}
                 />
               </View>
-              <Image source={{ uri: service.image }} style={styles.serviceImage} />
-            </View>
-          </Card>
-        ))}
+            </Card>
+          ))}
       </ScrollView>
     </View>
   );
@@ -232,5 +229,15 @@ const styles = StyleSheet.create({
   },
   bookButton: {
     alignSelf: 'flex-start',
+  },
+  feedbackContainer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  feedbackText: {
+    marginTop: 12,
+  },
+  feedbackCard: {
+    marginBottom: 16,
   },
 });

@@ -1,58 +1,225 @@
-import React, { useState } from 'react';
-import { ScrollView, View, StyleSheet, TouchableOpacity } from 'react-native';
-import Text from '@/components/ui/Text';
-import Card from '@/components/ui/Card';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Calendar as CalendarIcon, Check, Clock } from 'lucide-react-native';
 import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Text from '@/components/ui/Text';
 import Colors from '@/constants/Colors';
-import { Calendar as CalendarIcon, Clock, Check } from 'lucide-react-native';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  Professional,
+  Service,
+  createAppointment,
+  listAvailableProfessionals,
+  listServices,
+} from '@/lib/api';
+
+const timeSlots = ['09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+type SlotAvailabilityMap = Record<string, Record<string, Professional[]>>;
+
+function getDateKey(date: Date) {
+  return date.toISOString().split('T')[0];
+}
+
+function buildScheduledAt(date: Date, time: string) {
+  const [hours, minutes] = time.split(':').map(Number);
+  const scheduledAt = new Date(date);
+  scheduledAt.setHours(hours, minutes, 0, 0);
+  return scheduledAt;
+}
 
 export default function AppointmentsScreen() {
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const router = useRouter();
+  const params = useLocalSearchParams<{ serviceId?: string }>();
+  const { accessToken, isAuthenticated } = useAuth();
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
-  const [selectedService, setSelectedService] = useState<string | null>(null);
-  const [selectedStylist, setSelectedStylist] = useState<string | null>(null);
+  const [selectedService, setSelectedService] = useState<string | null>(params.serviceId ?? null);
+  const [selectedProfessional, setSelectedProfessional] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
+  const [services, setServices] = useState<Service[]>([]);
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [isLoadingServices, setIsLoadingServices] = useState(true);
+  const [isLoadingAvailability, setIsLoadingAvailability] = useState(false);
+  const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [slotAvailability, setSlotAvailability] = useState<SlotAvailabilityMap>({});
 
-  const currentDate = new Date();
-  const dates = Array.from({ length: 14 }, (_, i) => {
-    const date = new Date();
-    date.setDate(currentDate.getDate() + i);
-    return date;
+  const dates = useMemo(
+    () =>
+      Array.from({ length: 14 }, (_, index) => {
+        const date = new Date();
+        date.setHours(0, 0, 0, 0);
+        date.setDate(date.getDate() + index);
+        return date;
+      }),
+    []
+  );
+
+  useEffect(() => {
+    async function loadServices() {
+      setIsLoadingServices(true);
+      setError(null);
+
+      try {
+        const response = await listServices();
+        setServices(response.services);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar os serviços');
+      } finally {
+        setIsLoadingServices(false);
+      }
+    }
+
+    loadServices();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedService) {
+      setSlotAvailability({});
+      setProfessionals([]);
+      setSelectedDate(null);
+      setSelectedTime(null);
+      setSelectedProfessional(null);
+      return;
+    }
+
+    let isMounted = true;
+    const serviceId = selectedService;
+
+    async function loadProfessionals() {
+      setIsLoadingAvailability(true);
+      setIsLoadingProfessionals(true);
+      setError(null);
+
+      try {
+        const availabilityEntries = await Promise.all(
+          dates.flatMap((date) =>
+            timeSlots.map(async (time) => {
+              const scheduledAt = buildScheduledAt(date, time);
+              const response = await listAvailableProfessionals(serviceId, scheduledAt.toISOString());
+
+              return {
+                dateKey: getDateKey(date),
+                time,
+                professionals: response,
+              };
+            })
+          )
+        );
+
+        if (!isMounted) return;
+
+        const nextAvailability = availabilityEntries.reduce<SlotAvailabilityMap>((accumulator, entry) => {
+          if (!accumulator[entry.dateKey]) {
+            accumulator[entry.dateKey] = {};
+          }
+
+          accumulator[entry.dateKey][entry.time] = entry.professionals;
+          return accumulator;
+        }, {});
+
+        setSlotAvailability(nextAvailability);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar os profissionais');
+      } finally {
+        if (isMounted) {
+          setIsLoadingAvailability(false);
+          setIsLoadingProfessionals(false);
+        }
+      }
+    }
+
+    loadProfessionals();
+    return () => {
+      isMounted = false;
+    };
+  }, [dates, selectedService]);
+
+  useEffect(() => {
+    if (!selectedDate || !selectedTime || !selectedService) {
+      setProfessionals([]);
+      setSelectedProfessional(null);
+      return;
+    }
+
+    const availableProfessionals = slotAvailability[getDateKey(selectedDate)]?.[selectedTime] ?? [];
+    setProfessionals(availableProfessionals);
+
+    if (!availableProfessionals.some((professional) => professional.id === selectedProfessional)) {
+      setSelectedProfessional(null);
+    }
+  }, [selectedDate, selectedTime, selectedProfessional, selectedService, slotAvailability]);
+
+  const selectedServiceData = services.find((item) => item.id === selectedService);
+
+  const formatDate = (date: Date) => ({
+    day: date.getDate(),
+    month: date.toLocaleString('pt-BR', { month: 'short' }),
+    weekday: date.toLocaleString('pt-BR', { weekday: 'short' }),
   });
 
-  const timeSlots = [
-    '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', 
-    '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM'
-  ];
+  const isDateUnavailable = (date: Date) => {
+    if (!selectedService) return false;
 
-  const services = [
-    { id: '1', name: 'Corte de cabelo e estilo feminino' , price: 45, duration: '45 min' },
-    { id: '2', name: 'Corte de cabelo masculino', price: 30, duration: '30 min' },
-    { id: '3', name: 'Coloração', price: 85, duration: '90 min' },
-    { id: '4', name: 'Manicure', price: 35, duration: '45 min' },
-    { id: '5', name: 'Pedicure', price: 55, duration: '60 min' },
-  ];
+    const availabilityByTime = slotAvailability[getDateKey(date)];
+    if (!availabilityByTime) return false;
 
-  const stylists = [
-    { id: '1', name: 'Ana Carolina', role: 'Cabeleireira Profissional' },
-  ];
-
-  const formatDate = (date: Date) => {
-    const day = date.getDate();
-    const month = date.toLocaleString('default', { month: 'short' });
-    const weekday = date.toLocaleString('default', { weekday: 'short' });
-    return { day, month, weekday };
+    return timeSlots.every((time) => (availabilityByTime[time]?.length ?? 0) === 0);
   };
 
-  const isDateSelected = (date: Date) => {
-    return selectedDate === date.toDateString();
+  const isTimeUnavailable = (time: string) => {
+    if (!selectedService || !selectedDate) return false;
+
+    return (slotAvailability[getDateKey(selectedDate)]?.[time]?.length ?? 0) === 0;
   };
 
-  const handleDateSelect = (date: Date) => {
-    setSelectedDate(date.toDateString());
-  };
+  const handleBookAppointment = async () => {
+    if (!selectedDate || !selectedTime || !selectedService || !selectedProfessional) {
+      return;
+    }
 
-  const handleBookAppointment = () => {
-    alert('Agendado com sucesso!');
+    if (!isAuthenticated || !accessToken) {
+      Alert.alert('Login necessário', 'Faça login para confirmar o agendamento.');
+      router.push('/profile');
+      return;
+    }
+
+    const [hours, minutes] = selectedTime.split(':').map(Number);
+    const scheduledAt = new Date(selectedDate);
+    scheduledAt.setHours(hours, minutes, 0, 0);
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await createAppointment(accessToken, {
+        professionalId: selectedProfessional,
+        serviceId: selectedService,
+        scheduledAt: scheduledAt.toISOString(),
+        notes: notes.trim() || undefined,
+      });
+
+      Alert.alert('Solicitacao enviada', 'Seu agendamento foi enviado para aprovacao do profissional.');
+      setSelectedTime(null);
+      setSelectedProfessional(null);
+      setNotes('');
+      router.replace('/profile');
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Não foi possível criar o agendamento');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -62,11 +229,20 @@ export default function AppointmentsScreen() {
           Faça um Agendamento
         </Text>
         <Text variant="body" color="secondary" style={styles.headerSubtitle}>
-          Selecione um data, um horário e um serviço disponível
+          Escolha data, horário, serviço e profissional
         </Text>
       </View>
 
-      {/* Seleção de data */}
+      {error ? (
+        <View style={styles.section}>
+          <Card>
+            <Text variant="body" color="error">
+              {error}
+            </Text>
+          </Card>
+        </View>
+      ) : null}
+
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <CalendarIcon size={20} color={Colors.primary[500]} />
@@ -74,28 +250,32 @@ export default function AppointmentsScreen() {
             Selecione uma Data
           </Text>
         </View>
-        
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.datesContainer}
-        >
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.datesContainer}>
           {dates.map((date, index) => {
             const { day, month, weekday } = formatDate(date);
-            const isSelected = isDateSelected(date);
-            
+            const isSelected = selectedDate?.toDateString() === date.toDateString();
+            const isUnavailable = isDateUnavailable(date);
+
             return (
               <TouchableOpacity
                 key={index}
+                disabled={isUnavailable}
                 style={[
                   styles.dateCard,
                   isSelected && styles.dateCardSelected,
+                  isUnavailable && styles.dateCardUnavailable,
                 ]}
-                onPress={() => handleDateSelect(date)}
+                onPress={() => {
+                  if (isUnavailable) return;
+                  setSelectedDate(date);
+                  setSelectedTime(null);
+                  setSelectedProfessional(null);
+                }}
               >
                 <Text
                   variant="bodySmall"
-                  color={isSelected ? 'white' : 'secondary'}
+                  color={isUnavailable ? 'secondary' : isSelected ? 'white' : 'secondary'}
                   style={styles.weekday}
                 >
                   {weekday}
@@ -103,14 +283,11 @@ export default function AppointmentsScreen() {
                 <Text
                   variant="h3"
                   weight="semibold"
-                  color={isSelected ? 'white' : 'primary'}
+                  color={isUnavailable ? 'secondary' : isSelected ? 'white' : 'primary'}
                 >
                   {day}
                 </Text>
-                <Text
-                  variant="bodySmall"
-                  color={isSelected ? 'white' : 'secondary'}
-                >
+                <Text variant="bodySmall" color={isUnavailable ? 'secondary' : isSelected ? 'white' : 'secondary'}>
                   {month}
                 </Text>
               </TouchableOpacity>
@@ -119,56 +296,26 @@ export default function AppointmentsScreen() {
         </ScrollView>
       </View>
 
-      {/* Seleção de hora */}
-      {selectedDate && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Clock size={20} color={Colors.primary[500]} />
-            <Text variant="h4" weight="semibold" style={styles.sectionTitle}>
-              Selecione um Horário
-            </Text>
-          </View>
-          
-          <View style={styles.timeContainer}>
-            {timeSlots.map((time, index) => (
-              <TouchableOpacity
-                key={index}
-                style={[
-                  styles.timeCard,
-                  selectedTime === time && styles.timeCardSelected,
-                ]}
-                onPress={() => setSelectedTime(time)}
-              >
-                <Text
-                  variant="body"
-                  color={selectedTime === time ? 'white' : 'secondary'}
-                >
-                  {time}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Check size={20} color={Colors.primary[500]} />
+          <Text variant="h4" weight="semibold" style={styles.sectionTitle}>
+            Selecione um Serviço
+          </Text>
         </View>
-      )}
 
-      {/* Seleção de Serviço */}
-      {selectedTime && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Check size={20} color={Colors.primary[500]} />
-            <Text variant="h4" weight="semibold" style={styles.sectionTitle}>
-              Selecione um Serviço
-            </Text>
-          </View>
-          
-          {services.map((service) => (
+        {isLoadingServices ? (
+          <ActivityIndicator color={Colors.primary[500]} />
+        ) : (
+          services.map((service) => (
             <TouchableOpacity
               key={service.id}
-              style={[
-                styles.serviceCard,
-                selectedService === service.id && styles.serviceCardSelected,
-              ]}
-              onPress={() => setSelectedService(service.id)}
+              style={[styles.serviceCard, selectedService === service.id && styles.serviceCardSelected]}
+              onPress={() => {
+                setSelectedService(service.id);
+                setSelectedTime(null);
+                setSelectedProfessional(null);
+              }}
             >
               <View style={styles.serviceInfo}>
                 <Text
@@ -176,33 +323,74 @@ export default function AppointmentsScreen() {
                   weight="medium"
                   color={selectedService === service.id ? 'accent' : 'primary'}
                 >
-                  {service.name}
+                  {service.title}
                 </Text>
                 <View style={styles.serviceDetails}>
-                  <Text
-                    variant="bodySmall"
-                    color="secondary"
-                    style={styles.serviceDetail}
-                  >
-                    ${service.price}
+                  <Text variant="bodySmall" color="secondary" style={styles.serviceDetail}>
+                    R$ {Number(service.price).toFixed(2)}
                   </Text>
                   <Text variant="bodySmall" color="secondary">
-                    {service.duration}
+                    {service.durationMin} min
                   </Text>
                 </View>
               </View>
-              {selectedService === service.id && (
+              {selectedService === service.id ? (
                 <View style={styles.checkContainer}>
                   <Check size={16} color={Colors.white} />
                 </View>
-              )}
+              ) : null}
             </TouchableOpacity>
-          ))}
-        </View>
-      )}
+          ))
+        )}
+      </View>
 
-      {/* Seleção de profissional */}
-      {selectedService && (
+      {selectedDate ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Clock size={20} color={Colors.primary[500]} />
+            <Text variant="h4" weight="semibold" style={styles.sectionTitle}>
+              Selecione um Horário
+            </Text>
+          </View>
+
+          {selectedService && isLoadingAvailability ? (
+            <Text variant="bodySmall" color="secondary" style={styles.helperText}>
+              Verificando horarios indisponiveis...
+            </Text>
+          ) : null}
+
+          <View style={styles.timeContainer}>
+            {timeSlots.map((time) => {
+              const isUnavailable = isTimeUnavailable(time);
+
+              return (
+                <TouchableOpacity
+                  key={time}
+                  disabled={isUnavailable}
+                  style={[
+                    styles.timeCard,
+                    selectedTime === time && styles.timeCardSelected,
+                    isUnavailable && styles.timeCardUnavailable,
+                  ]}
+                  onPress={() => {
+                    if (isUnavailable) return;
+                    setSelectedTime(time);
+                  }}
+                >
+                  <Text
+                    variant="body"
+                    color={isUnavailable ? 'secondary' : selectedTime === time ? 'white' : 'secondary'}
+                  >
+                    {time}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+
+      {selectedService && selectedDate && selectedTime ? (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <CalendarIcon size={20} color={Colors.primary[500]} />
@@ -210,59 +398,83 @@ export default function AppointmentsScreen() {
               Selecione o profissional
             </Text>
           </View>
-          
-          {stylists.map((stylist) => (
-            <TouchableOpacity
-              key={stylist.id}
-              style={[
-                styles.stylistCard,
-                selectedStylist === stylist.id && styles.stylistCardSelected,
-              ]}
-              onPress={() => setSelectedStylist(stylist.id)}
-            >
-              <View style={styles.stylistInfo}>
-                <Text
-                  variant="body"
-                  weight="medium"
-                  color={selectedStylist === stylist.id ? 'accent' : 'primary'}
-                >
-                  {stylist.name}
-                </Text>
-                <Text variant="bodySmall" color="secondary">
-                  {stylist.role}
-                </Text>
-              </View>
-              {selectedStylist === stylist.id && (
-                <View style={styles.checkContainer}>
-                  <Check size={16} color={Colors.white} />
-                </View>
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
 
-      {/* Botão de marcação */}
-      {selectedDate && selectedTime && selectedService && selectedStylist && (
+          {isLoadingProfessionals ? (
+            <ActivityIndicator color={Colors.primary[500]} />
+          ) : professionals.length > 0 ? (
+            professionals.map((professional) => (
+              <TouchableOpacity
+                key={professional.id}
+                style={[
+                  styles.stylistCard,
+                  selectedProfessional === professional.id && styles.stylistCardSelected,
+                ]}
+                onPress={() => setSelectedProfessional(professional.id)}
+              >
+                <View style={styles.stylistInfo}>
+                  <Text
+                    variant="body"
+                    weight="medium"
+                    color={selectedProfessional === professional.id ? 'accent' : 'primary'}
+                  >
+                    {professional.user.name}
+                  </Text>
+                  <Text variant="bodySmall" color="secondary">
+                    {professional.specialties.length > 0
+                      ? professional.specialties.join(', ')
+                      : 'Profissional disponível'}
+                  </Text>
+                </View>
+                {selectedProfessional === professional.id ? (
+                  <View style={styles.checkContainer}>
+                    <Check size={16} color={Colors.white} />
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+            ))
+          ) : (
+            <Text variant="body" color="secondary">
+              Nenhum profissional disponível para a data selecionada.
+            </Text>
+          )}
+        </View>
+      ) : null}
+
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Check size={20} color={Colors.primary[500]} />
+          <Text variant="h4" weight="semibold" style={styles.sectionTitle}>
+            Observações
+          </Text>
+        </View>
+
+        <TextInput
+          value={notes}
+          onChangeText={setNotes}
+          placeholder="Algo importante para o atendimento?"
+          multiline
+          numberOfLines={4}
+          style={styles.notesInput}
+          placeholderTextColor={Colors.neutral[400]}
+        />
+      </View>
+
+      {selectedDate && selectedTime && selectedServiceData && selectedProfessional ? (
         <View style={styles.bookingSection}>
           <Card style={styles.summaryCard}>
             <Text variant="h4" weight="semibold" style={styles.summaryTitle}>
               Resumo
             </Text>
-            
+
             <View style={styles.summaryItem}>
               <Text variant="bodySmall" color="secondary">
                 Data:
               </Text>
               <Text variant="body" weight="medium">
-                {new Date(selectedDate).toLocaleDateString('en-US', {
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                })}
+                {selectedDate.toLocaleDateString('pt-BR')}
               </Text>
             </View>
-            
+
             <View style={styles.summaryItem}>
               <Text variant="bodySmall" color="secondary">
                 Hora:
@@ -271,34 +483,45 @@ export default function AppointmentsScreen() {
                 {selectedTime}
               </Text>
             </View>
-            
+
             <View style={styles.summaryItem}>
               <Text variant="bodySmall" color="secondary">
                 Serviço:
               </Text>
               <Text variant="body" weight="medium">
-                {services.find(s => s.id === selectedService)?.name}
+                {selectedServiceData.title}
               </Text>
             </View>
-            
+
             <View style={styles.summaryItem}>
               <Text variant="bodySmall" color="secondary">
                 Profissional:
               </Text>
               <Text variant="body" weight="medium">
-                {stylists.find(s => s.id === selectedStylist)?.name}
+                {professionals.find((item) => item.id === selectedProfessional)?.user.name}
               </Text>
             </View>
           </Card>
-          
+
+          {!isAuthenticated ? (
+            <Card style={styles.authWarningCard}>
+              <Text variant="body" color="secondary">
+                Entre com sua conta de cliente antes de confirmar o agendamento.
+              </Text>
+              <Button title="Ir para login" onPress={() => router.push('/profile')} style={styles.authButton} />
+            </Card>
+          ) : null}
+
           <Button
             title="Confirmar agendamento"
             onPress={handleBookAppointment}
             size="lg"
             style={styles.bookButton}
+            isLoading={isSubmitting}
+            disabled={!isAuthenticated || isSubmitting}
           />
         </View>
-      )}
+      ) : null}
     </ScrollView>
   );
 }
@@ -331,6 +554,9 @@ const styles = StyleSheet.create({
   sectionTitle: {
     marginLeft: 8,
   },
+  helperText: {
+    marginBottom: 12,
+  },
   datesContainer: {
     paddingRight: 8,
   },
@@ -348,6 +574,11 @@ const styles = StyleSheet.create({
   dateCardSelected: {
     backgroundColor: Colors.primary[500],
     borderColor: Colors.primary[500],
+  },
+  dateCardUnavailable: {
+    backgroundColor: Colors.neutral[200],
+    borderColor: Colors.neutral[300],
+    opacity: 0.55,
   },
   weekday: {
     marginBottom: 4,
@@ -369,6 +600,11 @@ const styles = StyleSheet.create({
   timeCardSelected: {
     backgroundColor: Colors.primary[500],
     borderColor: Colors.primary[500],
+  },
+  timeCardUnavailable: {
+    backgroundColor: Colors.neutral[200],
+    borderColor: Colors.neutral[300],
+    opacity: 0.55,
   },
   serviceCard: {
     flexDirection: 'row',
@@ -437,4 +673,23 @@ const styles = StyleSheet.create({
   bookButton: {
     marginTop: 8,
   },
+  notesInput: {
+    minHeight: 96,
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+    borderRadius: 12,
+    padding: 12,
+    textAlignVertical: 'top',
+    color: Colors.neutral[900],
+    fontFamily: 'Poppins-Regular',
+  },
+  authWarningCard: {
+    marginBottom: 16,
+  },
+  authButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
 });
+
+

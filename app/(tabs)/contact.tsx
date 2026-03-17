@@ -1,23 +1,43 @@
-import React from 'react';
-import { ScrollView, View, StyleSheet, TouchableOpacity, Linking, Platform } from 'react-native';
-import Text from '@/components/ui/Text';
-import Card from '@/components/ui/Card';
+import React, { useState } from 'react';
+import {
+  Alert,
+  Linking,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { Facebook, Instagram, Mail, MapPin, Phone, Clock, Twitter } from 'lucide-react-native';
 import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Text from '@/components/ui/Text';
 import Colors from '@/constants/Colors';
-import { MapPin, Phone, Mail, Clock, Instagram, Facebook, Twitter } from 'lucide-react-native';
+import { sendContactMessage } from '@/lib/api';
 
 export default function ContactScreen() {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [subject, setSubject] = useState('');
+  const [message, setMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const salonInfo = {
-    name: 'Karoll Novo',
-    address: 'Rua Artur Alvim 141',
-    phone: ' (11) 98989-4471',
+    name: 'Karoll Novo Estilo',
+    address: 'Rua Artur Alvim, 141',
+    phone: '(11) 98989-4471',
     email: 'estudanteana2@gmail.com',
     hours: [
-      { day: 'Terça - Domingo', hours: '9:00 AM - 7:00 PM' },
+      { day: 'Terça a Domingo', hours: '09:00 - 19:00' },
       { day: 'Segunda', hours: 'Fechado' },
     ],
     socialMedia: [
-      { name: 'Instagram', icon: <Instagram size={24} color={Colors.primary[500]} />, url: 'https://www.instagram.com/hairstyleanacarolina?utm_source=qr' },
+      {
+        name: 'Instagram',
+        icon: <Instagram size={24} color={Colors.primary[500]} />,
+        url: 'https://www.instagram.com/hairstyleanacarolina?utm_source=qr',
+      },
       { name: 'Facebook', icon: <Facebook size={24} color={Colors.primary[500]} />, url: 'https://facebook.com' },
       { name: 'X', icon: <Twitter size={24} color={Colors.primary[500]} />, url: 'https://x.com/' },
     ],
@@ -32,13 +52,35 @@ export default function ContactScreen() {
   };
 
   const handleGetDirections = () => {
-    const scheme = Platform.OS === 'ios' ? 'maps:' : 'geo:';
     const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(salonInfo.address)}`;
-    Linking.openURL(url);
+    if (Platform.OS === 'ios' || Platform.OS === 'android' || Platform.OS === 'web') {
+      Linking.openURL(url);
+    }
   };
 
-  const handleSocialMedia = (url: string) => {
-    Linking.openURL(url);
+  const handleSubmit = async () => {
+    try {
+      setIsSubmitting(true);
+      await sendContactMessage({
+        name: name.trim(),
+        email: email.trim(),
+        subject: subject.trim() || undefined,
+        message: message.trim(),
+      });
+
+      setName('');
+      setEmail('');
+      setSubject('');
+      setMessage('');
+      Alert.alert('Mensagem enviada', 'Recebemos sua mensagem e responderemos em breve.');
+    } catch (submitError) {
+      Alert.alert(
+        'Erro ao enviar',
+        submitError instanceof Error ? submitError.message : 'Tente novamente em instantes.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -48,11 +90,10 @@ export default function ContactScreen() {
           Nos Contate
         </Text>
         <Text variant="body" color="secondary" style={styles.headerSubtitle}>
-          Adoraríamos ouvi-lo
+          Adoraríamos ouvir você
         </Text>
       </View>
 
-      {/* Map placeholder */}
       <View style={styles.mapContainer}>
         <View style={styles.map}>
           <MapPin size={48} color={Colors.primary[500]} />
@@ -60,17 +101,12 @@ export default function ContactScreen() {
             Mapa interativo
           </Text>
           <Text variant="bodySmall" color="secondary">
-            Toque para abrir em Mapas
+            Toque para abrir no Google Maps
           </Text>
         </View>
-        <Button
-          title="Ver no Mapa"
-          onPress={handleGetDirections}
-          style={styles.directionsButton}
-        />
+        <Button title="Ver no Mapa" onPress={handleGetDirections} style={styles.directionsButton} />
       </View>
 
-      {/* Informações de contato */}
       <View style={styles.section}>
         <Text variant="h3" weight="semibold" style={styles.sectionTitle}>
           Quem Somos
@@ -95,7 +131,7 @@ export default function ContactScreen() {
             </View>
             <View style={styles.infoContent}>
               <Text variant="bodySmall" color="secondary">
-                Telefone para contato
+                Telefone
               </Text>
               <Text variant="body" color="accent">
                 {salonInfo.phone}
@@ -119,7 +155,6 @@ export default function ContactScreen() {
         </Card>
       </View>
 
-      {/* Horário de funcionamento */}
       <View style={styles.section}>
         <Text variant="h3" weight="semibold" style={styles.sectionTitle}>
           Nossos Horários
@@ -133,15 +168,12 @@ export default function ContactScreen() {
             </Text>
           </View>
 
-          {salonInfo.hours.map((item, index) => (
-            <View key={index} style={styles.hoursItem}>
+          {salonInfo.hours.map((item) => (
+            <View key={item.day} style={styles.hoursItem}>
               <Text variant="body" weight="medium">
                 {item.day}
               </Text>
-              <Text
-                variant="body"
-                color={item.hours === 'Fechado' ? 'error' : 'secondary'}
-              >
+              <Text variant="body" color={item.hours === 'Fechado' ? 'error' : 'secondary'}>
                 {item.hours}
               </Text>
             </View>
@@ -149,18 +181,17 @@ export default function ContactScreen() {
         </Card>
       </View>
 
-      {/* Redes Sociais */}
       <View style={styles.section}>
         <Text variant="h3" weight="semibold" style={styles.sectionTitle}>
           Nos Siga
         </Text>
 
         <View style={styles.socialContainer}>
-          {salonInfo.socialMedia.map((social, index) => (
+          {salonInfo.socialMedia.map((social) => (
             <TouchableOpacity
-              key={index}
+              key={social.name}
               style={styles.socialButton}
-              onPress={() => handleSocialMedia(social.url)}
+              onPress={() => Linking.openURL(social.url)}
             >
               <View style={styles.socialIcon}>{social.icon}</View>
               <Text variant="body" weight="medium">
@@ -171,7 +202,6 @@ export default function ContactScreen() {
         </View>
       </View>
 
-      {/* Formulário de contato */}
       <View style={styles.section}>
         <Text variant="h3" weight="semibold" style={styles.sectionTitle}>
           Mande uma Mensagem
@@ -179,14 +209,49 @@ export default function ContactScreen() {
 
         <Card style={styles.formCard}>
           <Text variant="body" color="secondary" style={styles.formText}>
-            Tem dúvidas ou precisa entrar em contato? 
-            Envie-nos uma mensagem e entraremos em contato o mais breve possível.
+            Tem dúvidas ou precisa entrar em contato? Envie sua mensagem e responderemos assim que possível.
           </Text>
+
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="Seu nome"
+            style={styles.input}
+            placeholderTextColor={Colors.neutral[400]}
+          />
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Seu e-mail"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={styles.input}
+            placeholderTextColor={Colors.neutral[400]}
+          />
+          <TextInput
+            value={subject}
+            onChangeText={setSubject}
+            placeholder="Assunto"
+            style={styles.input}
+            placeholderTextColor={Colors.neutral[400]}
+          />
+          <TextInput
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Sua mensagem"
+            multiline
+            numberOfLines={5}
+            style={[styles.input, styles.messageInput]}
+            placeholderTextColor={Colors.neutral[400]}
+          />
+
           <Button
-            title="Nos Contate"
-            onPress={handleEmail}
+            title="Enviar Mensagem"
+            onPress={handleSubmit}
             style={styles.contactButton}
             size="lg"
+            isLoading={isSubmitting}
+            disabled={!name.trim() || !email.trim() || message.trim().length < 10}
           />
         </Card>
       </View>
@@ -303,6 +368,20 @@ const styles = StyleSheet.create({
   },
   formText: {
     marginBottom: 24,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+    color: Colors.neutral[900],
+    fontFamily: 'Poppins-Regular',
+  },
+  messageInput: {
+    minHeight: 120,
+    textAlignVertical: 'top',
   },
   contactButton: {
     alignSelf: 'center',

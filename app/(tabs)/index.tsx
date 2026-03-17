@@ -1,31 +1,39 @@
 import React from 'react';
 import { ScrollView, View, StyleSheet, Image, Dimensions, TouchableOpacity } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Bell, Calendar, Scissors, User, Star } from 'lucide-react-native';
 import Text from '@/components/ui/Text';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
-import { Calendar, Scissors, User, Star, Clock, ArrowRight } from 'lucide-react-native';
 import Colors from '@/constants/Colors';
-import { useRouter } from 'expo-router';
-
-
+import { useAuth } from '@/contexts/AuthContext';
 
 const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const router = useRouter();
-  
+  const { isAuthenticated } = useAuth();
 
-const promotions = [
-  {
-    id: '1',
-    title: 'Especial de Outono',
-    description: '10% em todos os serviços de coloração para cabelos durante o outono',
-    image: '/images/promo-outono.jpg', 
-  },
+  const openProfilePanel = (panel: 'notifications' | 'account') => {
+    if (!isAuthenticated) {
+      router.push('/profile');
+      return;
+    }
+
+    router.push(`/profile?panel=${panel}`);
+  };
+
+  const promotions = [
+    {
+      id: '1',
+      title: 'Especial de Outono',
+      description: '10% em todos os servicos de coloracao para cabelos durante o outono',
+      image: '/images/promo-outono.jpg',
+    },
     {
       id: '2',
       title: 'Ofertas para Novos Clientes',
-      description: '30% de desconto em qualquer serviço para novos clientes',
+      description: '30% de desconto em qualquer servico para novos clientes',
       image: '/images/newClientEdited.png',
     },
   ];
@@ -39,7 +47,7 @@ const promotions = [
     },
     {
       id: '2',
-      title: 'Coloração de Cabelo',
+      title: 'Coloracao de Cabelo',
       price: 'A partir de R$85',
       icon: <Scissors size={24} color={Colors.primary[500]} />,
     },
@@ -61,16 +69,14 @@ const promotions = [
     {
       id: '1',
       name: 'Ana Carolina',
-      role: 'Cabelereira Geral',
+      role: 'Cabeleireira Geral',
       image: './images/personProfile.png',
       rating: 4.9,
     },
-
   ];
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Hero Section */}
       <View style={styles.heroContainer}>
         <Image
           source={{ uri: 'https://images.pexels.com/photos/3997391/pexels-photo-3997391.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2' }}
@@ -81,40 +87,30 @@ const promotions = [
             Karoll Novo Estilo
           </Text>
           <Text variant="body" color="white" style={styles.heroSubtitle}>
-            Onde a beleza encontra a experiência
+            Onde a beleza encontra a experiencia
           </Text>
           <Button
-          
-           title="Faça um Agendamento"
+            title="Faca um Agendamento"
             onPress={() => router.push('/appointments')}
             style={styles.heroButton}
             size="lg"
           />
         </View>
       </View>
-      
-      <View style={styles.promotionCard}>
 
-      </View>
-
-      {/* Promotions Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text variant="h3" weight="semibold">
             Novas Ofertas
           </Text>
-          <TouchableOpacity onPress={() => {}}>
+          <TouchableOpacity>
             <Text variant="bodySmall" color="accent">
               Veja mais
             </Text>
           </TouchableOpacity>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.promotionsContainer}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promotionsContainer}>
           {promotions.map((promo) => (
             <Card key={promo.id} style={styles.promotionCard} variant="elevated">
               <Image source={{ uri: promo.image }} style={styles.promotionImage} />
@@ -125,27 +121,20 @@ const promotions = [
                 <Text variant="bodySmall" color="secondary" style={styles.promotionDescription}>
                   {promo.description}
                 </Text>
-                <Button
-                  title="Veja sobre"
-                  variant="outline"
-                  size="sm"
-                  onPress={() => {}}
-                  style={styles.promotionButton}
-                />
+                <Button title="Veja sobre" variant="outline" size="sm" onPress={() => {}} style={styles.promotionButton} />
               </View>
             </Card>
           ))}
         </ScrollView>
       </View>
 
-      {/* Popular Services */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text variant="h3" weight="semibold">
-            Nossos Serviços
+            Nossos Servicos
           </Text>
           <TouchableOpacity onPress={() => router.push('/services')}>
-            <Text variant="bodySmall" color="accent" style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text variant="bodySmall" color="accent">
               Veja mais
             </Text>
           </TouchableOpacity>
@@ -153,11 +142,7 @@ const promotions = [
 
         <View style={styles.servicesContainer}>
           {topServices.map((service) => (
-            <TouchableOpacity
-              key={service.id}
-              style={styles.serviceCard}
-              onPress={() => router.push('/services')}
-            >
+            <TouchableOpacity key={service.id} style={styles.serviceCard} onPress={() => router.push('/services')}>
               <View style={styles.serviceIconContainer}>{service.icon}</View>
               <Text variant="body" weight="medium" style={styles.serviceTitle}>
                 {service.title}
@@ -170,24 +155,19 @@ const promotions = [
         </View>
       </View>
 
-      {/* Featured Stylists */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text variant="h3" weight="semibold">
             Nossos Especialistas
           </Text>
-          <TouchableOpacity onPress={() => {}}>
+          <TouchableOpacity>
             <Text variant="bodySmall" color="accent">
               Veja mais
             </Text>
           </TouchableOpacity>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.stylistsContainer}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stylistsContainer}>
           {featuredStylists.map((stylist) => (
             <Card key={stylist.id} style={styles.stylistCard}>
               <Image source={{ uri: stylist.image }} style={styles.stylistImage} />
@@ -210,37 +190,33 @@ const promotions = [
         </ScrollView>
       </View>
 
-
-          
-
-
-      
-
-      {/* Quick Actions */}
       <View style={styles.quickActionsContainer}>
-        <TouchableOpacity
-          style={styles.quickActionButton}
-          onPress={() => router.push('/appointments')}
-        >
+        <TouchableOpacity style={styles.quickActionButton} onPress={() => router.push('/appointments')}>
           <Calendar size={24} color={Colors.primary[500]} />
           <Text variant="body" weight="medium" style={styles.quickActionText}>
-            Marque Agora!
+            Agendar
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.quickActionButton} onPress={() => router.push('/services')}>
           <Scissors size={24} color={Colors.primary[500]} />
           <Text variant="body" weight="medium" style={styles.quickActionText}>
-            Serviços
+            Servicos
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.quickActionButton} onPress={() => router.push('/profile')}>
+        <TouchableOpacity style={styles.quickActionButton} onPress={() => openProfilePanel('notifications')}>
+          <Bell size={24} color={Colors.primary[500]} />
+          <Text variant="body" weight="medium" style={styles.quickActionText}>
+            Avisos
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.quickActionButton} onPress={() => openProfilePanel('account')}>
           <User size={24} color={Colors.primary[500]} />
           <Text variant="body" weight="medium" style={styles.quickActionText}>
             Conta
           </Text>
-       
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -371,9 +347,11 @@ const styles = StyleSheet.create({
   },
   quickActionsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     backgroundColor: Colors.white,
     paddingVertical: 16,
+    paddingHorizontal: 12,
     marginVertical: 16,
     borderRadius: 12,
     marginHorizontal: 16,
@@ -382,11 +360,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
+    rowGap: 12,
   },
   quickActionButton: {
     alignItems: 'center',
+    width: '24%',
   },
   quickActionText: {
     marginTop: 8,
+    textAlign: 'center',
   },
 });
