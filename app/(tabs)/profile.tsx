@@ -11,7 +11,15 @@ import {
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Bell, Calendar, Clock, LogOut, Settings, User } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  Bell,
+  Calendar,
+  Clock,
+  LogOut,
+  Settings,
+  User,
+} from 'lucide-react-native';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
 import Text from '@/components/ui/Text';
@@ -32,8 +40,10 @@ type AuthMode = 'login' | 'register';
 type ActivePanel = 'overview' | 'notifications' | 'account';
 
 function formatAppointmentStatus(status: Appointment['status']) {
-  if (status === 'PENDING') return 'Pendente';
-  if (status === 'CONFIRMED') return 'Confirmado';
+  if (status === 'PENDING')
+    return <Text style={styles.appointmentPending}>Pendente</Text>;
+  if (status === 'CONFIRMED')
+    return <Text style={styles.appointmentConfirmed}>Confirmado</Text>;
   if (status === 'CANCELLED') return 'Cancelado';
   if (status === 'COMPLETED') return 'Concluido';
   if (status === 'NO_SHOW') return 'Nao compareceu';
@@ -44,7 +54,17 @@ export default function ProfileScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ panel?: string }>();
   const isFocused = useIsFocused();
-  const { user, accessToken, isAuthenticated, isLoading, login, logout, refreshProfile, register } = useAuth();
+  const insets = useSafeAreaInsets();
+  const {
+    user,
+    accessToken,
+    isAuthenticated,
+    isLoading,
+    login,
+    logout,
+    refreshProfile,
+    register,
+  } = useAuth();
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [activePanel, setActivePanel] = useState<ActivePanel>('overview');
   const [name, setName] = useState('');
@@ -54,11 +74,17 @@ export default function ProfileScreen() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
-  const [appointmentsError, setAppointmentsError] = useState<string | null>(null);
+  const [appointmentsError, setAppointmentsError] = useState<string | null>(
+    null,
+  );
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [notificationsError, setNotificationsError] = useState<string | null>(null);
-  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>([]);
+  const [notificationsError, setNotificationsError] = useState<string | null>(
+    null,
+  );
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<
+    string[]
+  >([]);
   const [accountName, setAccountName] = useState('');
   const [accountEmail, setAccountEmail] = useState('');
   const [accountPhone, setAccountPhone] = useState('');
@@ -80,6 +106,7 @@ export default function ProfileScreen() {
     setAccountName(user.name ?? '');
     setAccountEmail(user.email ?? '');
     setAccountPhone(user.phone ?? '');
+    setAppointments(user.appointments ?? []);
   }, [user]);
 
   useEffect(() => {
@@ -100,16 +127,39 @@ export default function ProfileScreen() {
       setNotificationsError(null);
 
       try {
-        const [appointmentsResponse, notificationsResponse] = await Promise.all([
-          listAppointments(token),
-          listNotifications(token),
-        ]);
-        setAppointments(appointmentsResponse.appointments);
-        setNotifications(notificationsResponse);
-      } catch (loadError) {
-        const message = loadError instanceof Error ? loadError.message : 'Nao foi possivel carregar seus dados';
-        setAppointmentsError(message);
-        setNotificationsError(message);
+        const [appointmentsResult, notificationsResult] =
+          await Promise.allSettled([
+            listAppointments(token),
+            listNotifications(token),
+          ]);
+
+        if (appointmentsResult.status === 'fulfilled') {
+          setAppointments(appointmentsResult.value.appointments);
+        } else {
+          const message =
+            appointmentsResult.reason instanceof Error
+              ? appointmentsResult.reason.message
+              : 'Nao foi possivel carregar seus agendamentos';
+          setAppointmentsError(message);
+        }
+
+        if (notificationsResult.status === 'fulfilled') {
+          setNotifications(notificationsResult.value);
+        } else {
+          const message =
+            notificationsResult.reason instanceof Error
+              ? notificationsResult.reason.message
+              : 'Nao foi possivel carregar suas notificacoes';
+          setNotificationsError(message);
+        }
+
+        if (
+          appointmentsResult.status === 'rejected' &&
+          notificationsResult.status === 'rejected'
+        ) {
+          setAppointments([]);
+          setNotifications([]);
+        }
       } finally {
         setAppointmentsLoading(false);
         setNotificationsLoading(false);
@@ -123,32 +173,41 @@ export default function ProfileScreen() {
     () =>
       appointments.filter(
         (appointment) =>
-          new Date(appointment.scheduledAt).getTime() >= Date.now() && appointment.status !== 'CANCELLED'
+          appointment.status !== 'CANCELLED' &&
+          appointment.status !== 'COMPLETED' &&
+          appointment.status !== 'NO_SHOW',
       ),
-    [appointments]
+    [appointments],
   );
 
   const pastAppointments = useMemo(
     () =>
       appointments.filter(
         (appointment) =>
-          new Date(appointment.scheduledAt).getTime() < Date.now() || appointment.status === 'CANCELLED'
+          appointment.status === 'CANCELLED' ||
+          appointment.status === 'COMPLETED' ||
+          appointment.status === 'NO_SHOW',
       ),
-    [appointments]
+    [appointments],
   );
 
   const visibleNotifications = useMemo(
-    () => notifications.filter((notification) => !dismissedNotificationIds.includes(notification.id)),
-    [dismissedNotificationIds, notifications]
+    () =>
+      notifications.filter(
+        (notification) => !dismissedNotificationIds.includes(notification.id),
+      ),
+    [dismissedNotificationIds, notifications],
   );
 
   const unreadNotifications = useMemo(
     () => visibleNotifications.filter((notification) => !notification.isRead),
-    [visibleNotifications]
+    [visibleNotifications],
   );
 
   const togglePanel = (panel: Exclude<ActivePanel, 'overview'>) => {
-    setActivePanel((currentPanel) => (currentPanel === panel ? 'overview' : panel));
+    setActivePanel((currentPanel) =>
+      currentPanel === panel ? 'overview' : panel,
+    );
   };
 
   const clearAuthForm = () => {
@@ -164,18 +223,26 @@ export default function ProfileScreen() {
     const trimmedName = name.trim();
     const trimmedPhone = phone.trim();
 
-    if (authMode === 'register' && !trimmedName) return 'Informe seu nome para criar a conta.';
+    if (authMode === 'register' && !trimmedName)
+      return 'Informe seu nome para criar a conta.';
     if (!trimmedEmail) return 'Informe seu e-mail.';
     if (!/\S+@\S+\.\S+/.test(trimmedEmail)) return 'Digite um e-mail valido.';
-    if (authMode === 'register' && trimmedPhone && trimmedPhone.replace(/\D/g, '').length < 10) {
+    if (
+      authMode === 'register' &&
+      trimmedPhone &&
+      trimmedPhone.replace(/\D/g, '').length < 10
+    ) {
       return 'Digite um telefone valido com DDD.';
     }
     if (!password) return 'Informe sua senha.';
 
     if (authMode === 'register') {
-      if (password.length < 8) return 'A senha precisa ter pelo menos 8 caracteres.';
-      if (!/[A-Z]/.test(password)) return 'A senha precisa ter ao menos uma letra maiuscula.';
-      if (!/\d/.test(password)) return 'A senha precisa ter ao menos um numero.';
+      if (password.length < 8)
+        return 'A senha precisa ter pelo menos 8 caracteres.';
+      if (!/[A-Z]/.test(password))
+        return 'A senha precisa ter ao menos uma letra maiuscula.';
+      if (!/\d/.test(password))
+        return 'A senha precisa ter ao menos um numero.';
     }
 
     return null;
@@ -203,7 +270,8 @@ export default function ProfileScreen() {
       }
       clearAuthForm();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Tente novamente.';
+      const message =
+        error instanceof Error ? error.message : 'Tente novamente.';
       setAuthError(message);
       Alert.alert('Nao foi possivel entrar', message);
     }
@@ -225,12 +293,24 @@ export default function ProfileScreen() {
     if (!accessToken) return;
 
     try {
-      await cancelAppointment(accessToken, appointmentId, 'Cancelado pelo cliente no app');
+      await cancelAppointment(
+        accessToken,
+        appointmentId,
+        'Cancelado pelo cliente no app',
+      );
       await reloadAppointments();
       await reloadNotifications();
-      Alert.alert('Agendamento cancelado', 'Seu agendamento foi cancelado com sucesso.');
+      Alert.alert(
+        'Agendamento cancelado',
+        'Seu agendamento foi cancelado com sucesso.',
+      );
     } catch (error) {
-      Alert.alert('Erro ao cancelar', error instanceof Error ? error.message : 'Tente novamente em instantes.');
+      Alert.alert(
+        'Erro ao cancelar',
+        error instanceof Error
+          ? error.message
+          : 'Tente novamente em instantes.',
+      );
     }
   };
 
@@ -241,10 +321,39 @@ export default function ProfileScreen() {
       await acceptAppointment(accessToken, appointmentId);
       await reloadAppointments();
       await reloadNotifications();
-      Alert.alert('Agendamento aceito', 'O cliente foi avisado da confirmacao.');
+      Alert.alert(
+        'Agendamento aceito',
+        'O cliente foi avisado da confirmação.',
+      );
     } catch (error) {
-      Alert.alert('Erro ao aceitar', error instanceof Error ? error.message : 'Tente novamente em instantes.');
+      Alert.alert(
+        'Erro ao aceitar',
+        error instanceof Error
+          ? error.message
+          : 'Tente novamente em instantes.',
+      );
     }
+  };
+
+  const handleRescheduleAppointment = (appointment: Appointment) => {
+    if (!appointment.service?.id || !appointment.professional?.id) {
+      Alert.alert(
+        'Nao foi possivel reagendar',
+        'Este agendamento nao possui servico ou profissional associado.',
+      );
+      return;
+    }
+
+    router.push({
+      pathname: '/appointments',
+      params: {
+        appointmentId: appointment.id,
+        serviceId: appointment.service.id,
+        professionalId: appointment.professional.id,
+        scheduledAt: appointment.scheduledAt,
+        notes: appointment.notes ?? '',
+      },
+    });
   };
 
   const handleMarkAllAsRead = async () => {
@@ -254,14 +363,21 @@ export default function ProfileScreen() {
       await markAllNotificationsAsRead(accessToken);
       await reloadNotifications();
     } catch (error) {
-      Alert.alert('Erro ao marcar avisos', error instanceof Error ? error.message : 'Tente novamente em instantes.');
+      Alert.alert(
+        'Erro ao marcar avisos',
+        error instanceof Error
+          ? error.message
+          : 'Tente novamente em instantes.',
+      );
     }
   };
 
   const handleClearNotifications = () => {
     setDismissedNotificationIds((currentIds) => [
       ...currentIds,
-      ...visibleNotifications.map((notification) => notification.id).filter((id) => !currentIds.includes(id)),
+      ...visibleNotifications
+        .map((notification) => notification.id)
+        .filter((id) => !currentIds.includes(id)),
     ]);
     setNotificationsError(null);
   };
@@ -284,12 +400,12 @@ export default function ProfileScreen() {
     }
 
     if (!/\S+@\S+\.\S+/.test(trimmedEmail)) {
-      setAccountError('Digite um e-mail valido.');
+      setAccountError('Digite um e-mail válido.');
       return;
     }
 
     if (trimmedPhone && trimmedPhone.replace(/\D/g, '').length < 10) {
-      setAccountError('Digite um telefone valido com DDD.');
+      setAccountError('Digite um telefone válido com DDD.');
       return;
     }
 
@@ -300,17 +416,19 @@ export default function ProfileScreen() {
       }
 
       if (!/[A-Z]/.test(accountPassword)) {
-        setAccountError('A nova senha precisa ter ao menos uma letra maiuscula.');
+        setAccountError(
+          'A nova senha precisa ter ao menos uma letra maiúscula.',
+        );
         return;
       }
 
       if (!/\d/.test(accountPassword)) {
-        setAccountError('A nova senha precisa ter ao menos um numero.');
+        setAccountError('A nova senha precisa ter ao menos um número.');
         return;
       }
 
       if (accountPassword !== accountConfirmPassword) {
-        setAccountError('A confirmacao da senha nao confere.');
+        setAccountError('A confirmação da senha não confere.');
         return;
       }
     }
@@ -331,7 +449,11 @@ export default function ProfileScreen() {
       setAccountConfirmPassword('');
       setAccountSuccess('Seus dados foram atualizados com sucesso.');
     } catch (error) {
-      setAccountError(error instanceof Error ? error.message : 'Nao foi possivel atualizar seus dados.');
+      setAccountError(
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel atualizar seus dados.',
+      );
     } finally {
       setAccountSaving(false);
     }
@@ -369,24 +491,36 @@ export default function ProfileScreen() {
           <Card style={styles.loginCard}>
             <View style={styles.authTabs}>
               <TouchableOpacity
-                style={[styles.authTab, authMode === 'login' && styles.authTabActive]}
+                style={[
+                  styles.authTab,
+                  authMode === 'login' && styles.authTabActive,
+                ]}
                 onPress={() => {
                   setAuthMode('login');
                   setAuthError(null);
                 }}
               >
-                <Text color={authMode === 'login' ? 'white' : 'secondary'} weight="medium">
+                <Text
+                  color={authMode === 'login' ? 'white' : 'secondary'}
+                  weight="medium"
+                >
                   Login
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.authTab, authMode === 'register' && styles.authTabActive]}
+                style={[
+                  styles.authTab,
+                  authMode === 'register' && styles.authTabActive,
+                ]}
                 onPress={() => {
                   setAuthMode('register');
                   setAuthError(null);
                 }}
               >
-                <Text color={authMode === 'register' ? 'white' : 'secondary'} weight="medium">
+                <Text
+                  color={authMode === 'register' ? 'white' : 'secondary'}
+                  weight="medium"
+                >
                   Cadastro
                 </Text>
               </TouchableOpacity>
@@ -446,7 +580,9 @@ export default function ProfileScreen() {
                 setPassword(value);
                 if (authError) setAuthError(null);
               }}
-              placeholder={authMode === 'login' ? 'Senha' : 'Senha com maiuscula e numero'}
+              placeholder={
+                authMode === 'login' ? 'Senha' : 'Senha com maiuscula e numero'
+              }
               secureTextEntry
               style={styles.input}
               placeholderTextColor={Colors.neutral[400]}
@@ -458,7 +594,9 @@ export default function ProfileScreen() {
               style={styles.loginButton}
               size="lg"
               isLoading={isLoading}
-              disabled={!email || !password || (authMode === 'register' && !name)}
+              disabled={
+                !email || !password || (authMode === 'register' && !name)
+              }
             />
           </Card>
         </View>
@@ -468,7 +606,7 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.profileHeader}>
+      <View style={[styles.profileHeader, { paddingTop: insets.top + 20 }]}>
         <View style={styles.profileInfo}>
           <Image
             source={{
@@ -493,7 +631,10 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.actionsContainer}>
-        <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/appointments')}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => router.push('/appointments')}
+        >
           <View style={styles.actionIcon}>
             <Calendar size={20} color={Colors.primary[500]} />
           </View>
@@ -502,17 +643,25 @@ export default function ProfileScreen() {
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionButton} onPress={() => togglePanel('notifications')}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => togglePanel('notifications')}
+        >
           <View style={styles.actionIcon}>
             <Bell size={20} color={Colors.primary[500]} />
           </View>
           <Text variant="bodySmall" style={styles.actionText}>
             Avisos
           </Text>
-          {unreadNotifications.length > 0 ? <View style={styles.badge} /> : null}
+          {unreadNotifications.length > 0 ? (
+            <View style={styles.badge} />
+          ) : null}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionButton} onPress={() => togglePanel('account')}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => togglePanel('account')}
+        >
           <View style={styles.actionIcon}>
             <Settings size={20} color={Colors.primary[500]} />
           </View>
@@ -535,7 +684,7 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text variant="h4" weight="semibold">
-              Notificacoes
+              Notificações
             </Text>
             <View style={styles.sectionActions}>
               {visibleNotifications.length > 0 ? (
@@ -555,7 +704,9 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {notificationsLoading ? <ActivityIndicator color={Colors.primary[500]} /> : null}
+          {notificationsLoading ? (
+            <ActivityIndicator color={Colors.primary[500]} />
+          ) : null}
           {notificationsError ? (
             <Card>
               <Text variant="body" color="error">
@@ -578,7 +729,10 @@ export default function ProfileScreen() {
                 <Text variant="body" weight="semibold">
                   {notification.title}
                 </Text>
-                <Text variant="bodySmall" color={notification.isRead ? 'secondary' : 'accent'}>
+                <Text
+                  variant="bodySmall"
+                  color={notification.isRead ? 'secondary' : 'accent'}
+                >
                   {notification.isRead ? 'Lida' : 'Nova'}
                 </Text>
               </View>
@@ -737,7 +891,11 @@ export default function ProfileScreen() {
                 {user?.role}
               </Text>
 
-              <Button title="Atualizar dados" onPress={refreshProfile} style={styles.refreshButton} />
+              <Button
+                title="Atualizar dados"
+                onPress={refreshProfile}
+                style={styles.refreshButton}
+              />
             </Card>
           )}
         </View>
@@ -757,7 +915,9 @@ export default function ProfileScreen() {
           ) : null}
         </View>
 
-        {appointmentsLoading ? <ActivityIndicator color={Colors.primary[500]} /> : null}
+        {appointmentsLoading ? (
+          <ActivityIndicator color={Colors.primary[500]} />
+        ) : null}
         {appointmentsError ? (
           <Card>
             <Text variant="body" color="error">
@@ -766,7 +926,9 @@ export default function ProfileScreen() {
           </Card>
         ) : null}
 
-        {!appointmentsLoading && upcomingAppointments.length === 0 && !appointmentsError ? (
+        {!appointmentsLoading &&
+        upcomingAppointments.length === 0 &&
+        !appointmentsError ? (
           <Card>
             <Text variant="body" color="secondary">
               Voce ainda nao tem proximos agendamentos.
@@ -786,18 +948,58 @@ export default function ProfileScreen() {
             </View>
 
             <Text variant="bodySmall" color="secondary">
-              {appointment.professional?.user.name ?? 'Profissional'}
+              {(user?.role === 'PROFESSIONAL' || user?.role === 'ADMIN') &&
+              appointment.status === 'PENDING' ? (
+                <>
+                  <Text style={styles.appointmentLabel}>{'Cliente: '}</Text>
+                  <Text style={styles.appointmentValue}>
+                    {appointment.client?.user?.name ?? 'Cliente'}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.appointmentLabel}>
+                    {'Profissional: '}
+                  </Text>
+                  <Text style={styles.appointmentValue}>
+                    {appointment.professional?.user?.name ?? 'Profissional'}
+                  </Text>
+                </>
+              )}
             </Text>
+
+            <Text
+              variant="bodySmall"
+              color="secondary"
+              style={styles.appointmentObs}
+            >
+              <Text style={styles.appointmentLabel}>{'Data: '}</Text>
+              <Text style={styles.appointmentValue}>
+                {new Date(appointment.scheduledAt).toLocaleDateString('pt-BR')}{' '}
+                as{' '}
+                {new Date(appointment.scheduledAt).toLocaleTimeString('pt-BR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </Text>
+
             <Text variant="bodySmall" color="secondary">
-              {new Date(appointment.scheduledAt).toLocaleDateString('pt-BR')} as{' '}
-              {new Date(appointment.scheduledAt).toLocaleTimeString('pt-BR', {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
+              {appointment.notes ? (
+                <>
+                  <Text style={styles.appointmentLabel}>Observação: </Text>
+                  <Text style={styles.appointmentValue}>
+                    {appointment.notes}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.appointmentLabel}>Não há observações</Text>
+              )}
             </Text>
 
             <View style={styles.appointmentActions}>
-              {user?.role === 'PROFESSIONAL' && appointment.status === 'PENDING' ? (
+              {(user?.role === 'PROFESSIONAL' || user?.role === 'ADMIN') &&
+              appointment.status === 'PENDING' ? (
                 <Button
                   title="Aceitar"
                   variant="primary"
@@ -806,16 +1008,26 @@ export default function ProfileScreen() {
                   style={styles.appointmentActionButton}
                 />
               ) : (
-                <Button
-                  title="Novo agendamento"
-                  variant="outline"
-                  size="sm"
-                  onPress={() => router.push('/appointments')}
-                  style={styles.appointmentActionButton}
-                />
+                <Text variant="bodySmall" color="secondary">
+                  {''}
+                </Text>
               )}
 
-              {user?.role !== 'PROFESSIONAL' ? (
+              {appointment.status !== 'CANCELLED' &&
+              appointment.status !== 'COMPLETED' &&
+              appointment.status !== 'NO_SHOW' ? (
+                <Button
+                  title="Reagendar"
+                  variant="outline"
+                  size="sm"
+                  onPress={() => handleRescheduleAppointment(appointment)}
+                  style={styles.appointmentActionButton}
+                />
+              ) : null}
+
+              {appointment.status !== 'CANCELLED' &&
+              appointment.status !== 'COMPLETED' &&
+              appointment.status !== 'NO_SHOW' ? (
                 <Button
                   title="Cancelar"
                   variant="ghost"
@@ -932,8 +1144,7 @@ const styles = StyleSheet.create({
   },
   profileHeader: {
     backgroundColor: Colors.primary[500],
-    paddingTop: 60,
-    paddingBottom: 24,
+    paddingBottom: 44,
     paddingHorizontal: 16,
   },
   profileInfo: {
@@ -953,10 +1164,11 @@ const styles = StyleSheet.create({
   },
   actionsContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     backgroundColor: Colors.white,
     paddingVertical: 16,
     paddingHorizontal: 8,
-    justifyContent: 'space-between',
+    justifyContent: 'space-around',
     borderRadius: 12,
     marginHorizontal: 16,
     marginTop: -24,
@@ -968,7 +1180,11 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     alignItems: 'center',
+    width: '24%',
+    minWidth: 68,
     paddingHorizontal: 8,
+    paddingVertical: 4,
+    justifyContent: 'flex-start',
   },
   actionIcon: {
     width: 40,
@@ -981,6 +1197,9 @@ const styles = StyleSheet.create({
   },
   actionText: {
     marginTop: 4,
+    textAlign: 'center',
+    width: '100%',
+    fontSize: 12,
   },
   logoutIcon: {
     backgroundColor: Colors.error[50],
@@ -1041,5 +1260,26 @@ const styles = StyleSheet.create({
   },
   appointmentActionButton: {
     marginRight: 8,
+  },
+  appointmentLabel: {
+    fontSize: 14,
+    color: Colors.primary[500],
+  },
+  appointmentValue: {
+    fontSize: 14,
+    color: Colors.black,
+  },
+  appointmentObs: {
+    fontSize: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.neutral[200],
+  },
+  appointmentConfirmed: {
+    fontSize: 14,
+    color: Colors.success[700],
+  },
+  appointmentPending: {
+    fontSize: 14,
+    color: Colors.primary[800],
   },
 });

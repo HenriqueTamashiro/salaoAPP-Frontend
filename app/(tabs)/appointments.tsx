@@ -21,6 +21,7 @@ import {
   createAppointment,
   listAvailableProfessionals,
   listServices,
+  rescheduleAppointment,
 } from '@/lib/api';
 
 const timeSlots = ['09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
@@ -28,6 +29,10 @@ type SlotAvailabilityMap = Record<string, Record<string, Professional[]>>;
 
 function getDateKey(date: Date) {
   return date.toISOString().split('T')[0];
+}
+
+function getAvailabilityKey(serviceId: string, date: Date) {
+  return `${serviceId}:${getDateKey(date)}`;
 }
 
 function buildScheduledAt(date: Date, time: string) {
@@ -39,13 +44,26 @@ function buildScheduledAt(date: Date, time: string) {
 
 export default function AppointmentsScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ serviceId?: string }>();
-  const { accessToken, isAuthenticated } = useAuth();
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const params = useLocalSearchParams<{
+    serviceId?: string;
+    appointmentId?: string;
+    professionalId?: string;
+    scheduledAt?: string;
+    notes?: string;
+  }>();
+  const { accessToken, isAuthenticated, user } = useAuth();
+  const initialScheduledAt = useMemo(() => {
+    if (!params.scheduledAt) return null;
+
+    const parsedDate = new Date(params.scheduledAt);
+    return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+  }, [params.scheduledAt]);
+  const isRescheduleMode = Boolean(params.appointmentId);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(initialScheduledAt);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [selectedService, setSelectedService] = useState<string | null>(params.serviceId ?? null);
-  const [selectedProfessional, setSelectedProfessional] = useState<string | null>(null);
-  const [notes, setNotes] = useState('');
+  const [selectedProfessional, setSelectedProfessional] = useState<string | null>(params.professionalId ?? null);
+  const [notes, setNotes] = useState(params.notes ?? '');
   const [services, setServices] = useState<Service[]>([]);
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [isLoadingServices, setIsLoadingServices] = useState(true);
@@ -65,6 +83,14 @@ export default function AppointmentsScreen() {
       }),
     []
   );
+
+  useEffect(() => {
+    if (!initialScheduledAt) return;
+
+    setSelectedTime(
+      `${String(initialScheduledAt.getHours()).padStart(2, '0')}:${String(initialScheduledAt.getMinutes()).padStart(2, '0')}`
+    );
+  }, [initialScheduledAt]);
 
   useEffect(() => {
     async function loadServices() {
@@ -88,14 +114,28 @@ export default function AppointmentsScreen() {
     if (!selectedService) {
       setSlotAvailability({});
       setProfessionals([]);
-      setSelectedDate(null);
-      setSelectedTime(null);
-      setSelectedProfessional(null);
+      if (!isRescheduleMode) {
+        setSelectedProfessional(null);
+      }
+      return;
+    }
+
+    if (!selectedDate) {
+      setIsLoadingAvailability(false);
+      setIsLoadingProfessionals(false);
       return;
     }
 
     let isMounted = true;
     const serviceId = selectedService;
+    const activeDate = selectedDate;
+    const availabilityKey = getAvailabilityKey(serviceId, activeDate);
+
+    if (slotAvailability[availabilityKey]) {
+      return () => {
+        isMounted = false;
+      };
+    }
 
     async function loadProfessionals() {
       setIsLoadingAvailability(true);
@@ -104,32 +144,37 @@ export default function AppointmentsScreen() {
 
       try {
         const availabilityEntries = await Promise.all(
-          dates.flatMap((date) =>
-            timeSlots.map(async (time) => {
-              const scheduledAt = buildScheduledAt(date, time);
-              const response = await listAvailableProfessionals(serviceId, scheduledAt.toISOString());
+          timeSlots.map(async (time) => {
+            const scheduledAt = buildScheduledAt(activeDate, time);
+            const response = await listAvailableProfessionals(
+              serviceId,
+              scheduledAt.toISOString(),
+              isRescheduleMode ? params.appointmentId : undefined
+            );
 
-              return {
-                dateKey: getDateKey(date),
-                time,
-                professionals: response,
-              };
-            })
-          )
+            return {
+              dateKey: availabilityKey,
+              time,
+              professionals: response,
+            };
+          })
         );
 
         if (!isMounted) return;
 
-        const nextAvailability = availabilityEntries.reduce<SlotAvailabilityMap>((accumulator, entry) => {
-          if (!accumulator[entry.dateKey]) {
-            accumulator[entry.dateKey] = {};
+        setSlotAvailability((currentAvailability) => {
+          const nextAvailability = { ...currentAvailability };
+
+          if (!nextAvailability[availabilityKey]) {
+            nextAvailability[availabilityKey] = {};
           }
 
-          accumulator[entry.dateKey][entry.time] = entry.professionals;
-          return accumulator;
-        }, {});
+          availabilityEntries.forEach((entry) => {
+            nextAvailability[entry.dateKey][entry.time] = entry.professionals;
+          });
 
-        setSlotAvailability(nextAvailability);
+          return nextAvailability;
+        });
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar os profissionais');
       } finally {
@@ -144,22 +189,27 @@ export default function AppointmentsScreen() {
     return () => {
       isMounted = false;
     };
-  }, [dates, selectedService]);
+  }, [isRescheduleMode, params.appointmentId, selectedDate, selectedService]);
 
   useEffect(() => {
     if (!selectedDate || !selectedTime || !selectedService) {
       setProfessionals([]);
-      setSelectedProfessional(null);
+      if (!isRescheduleMode) {
+        setSelectedProfessional(null);
+      }
       return;
     }
 
-    const availableProfessionals = slotAvailability[getDateKey(selectedDate)]?.[selectedTime] ?? [];
+    const availableProfessionals =
+      slotAvailability[getAvailabilityKey(selectedService, selectedDate)]?.[selectedTime] ?? [];
     setProfessionals(availableProfessionals);
 
-    if (!availableProfessionals.some((professional) => professional.id === selectedProfessional)) {
-      setSelectedProfessional(null);
+    if (!isRescheduleMode && !availableProfessionals.some((professional) => professional.id === selectedProfessional)) {
+      if (!isRescheduleMode) {
+        setSelectedProfessional(null);
+      }
     }
-  }, [selectedDate, selectedTime, selectedProfessional, selectedService, slotAvailability]);
+  }, [isRescheduleMode, selectedDate, selectedTime, selectedProfessional, selectedService, slotAvailability]);
 
   const selectedServiceData = services.find((item) => item.id === selectedService);
 
@@ -172,16 +222,31 @@ export default function AppointmentsScreen() {
   const isDateUnavailable = (date: Date) => {
     if (!selectedService) return false;
 
-    const availabilityByTime = slotAvailability[getDateKey(date)];
+    const availabilityByTime = slotAvailability[getAvailabilityKey(selectedService, date)];
     if (!availabilityByTime) return false;
 
-    return timeSlots.every((time) => (availabilityByTime[time]?.length ?? 0) === 0);
+    return timeSlots.every((time) => {
+      const availableProfessionals = availabilityByTime[time] ?? [];
+
+      if (!selectedProfessional) {
+        return availableProfessionals.length === 0;
+      }
+
+      return !availableProfessionals.some((professional) => professional.id === selectedProfessional);
+    });
   };
 
   const isTimeUnavailable = (time: string) => {
     if (!selectedService || !selectedDate) return false;
 
-    return (slotAvailability[getDateKey(selectedDate)]?.[time]?.length ?? 0) === 0;
+    const availableProfessionals =
+      slotAvailability[getAvailabilityKey(selectedService, selectedDate)]?.[time] ?? [];
+
+    if (!selectedProfessional) {
+      return availableProfessionals.length === 0;
+    }
+
+    return !availableProfessionals.some((professional) => professional.id === selectedProfessional);
   };
 
   const handleBookAppointment = async () => {
@@ -203,16 +268,32 @@ export default function AppointmentsScreen() {
     setError(null);
 
     try {
-      await createAppointment(accessToken, {
-        professionalId: selectedProfessional,
-        serviceId: selectedService,
-        scheduledAt: scheduledAt.toISOString(),
-        notes: notes.trim() || undefined,
-      });
+      if (isRescheduleMode && params.appointmentId) {
+        await rescheduleAppointment(accessToken, params.appointmentId, {
+          scheduledAt: scheduledAt.toISOString(),
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        await createAppointment(accessToken, {
+          professionalId: selectedProfessional,
+          serviceId: selectedService,
+          scheduledAt: scheduledAt.toISOString(),
+          notes: notes.trim() || undefined,
+        });
+      }
 
-      Alert.alert('Solicitacao enviada', 'Seu agendamento foi enviado para aprovacao do profissional.');
+      Alert.alert(
+        isRescheduleMode ? 'Reagendamento enviado' : 'Solicitacao enviada',
+        isRescheduleMode
+          ? user?.role === 'CLIENT'
+            ? 'Sua solicitacao de reagendamento foi enviada para confirmacao do profissional.'
+            : 'O agendamento foi reagendado com sucesso.'
+          : 'Seu agendamento foi enviado para aprovacao do profissional.'
+      );
       setSelectedTime(null);
-      setSelectedProfessional(null);
+      if (!isRescheduleMode) {
+        setSelectedProfessional(null);
+      }
       setNotes('');
       router.replace('/profile');
     } catch (submitError) {
@@ -270,7 +351,9 @@ export default function AppointmentsScreen() {
                   if (isUnavailable) return;
                   setSelectedDate(date);
                   setSelectedTime(null);
-                  setSelectedProfessional(null);
+                  if (!isRescheduleMode) {
+                    setSelectedProfessional(null);
+                  }
                 }}
               >
                 <Text
@@ -310,9 +393,16 @@ export default function AppointmentsScreen() {
           services.map((service) => (
             <TouchableOpacity
               key={service.id}
-              style={[styles.serviceCard, selectedService === service.id && styles.serviceCardSelected]}
+              disabled={isRescheduleMode}
+              style={[
+                styles.serviceCard,
+                selectedService === service.id && styles.serviceCardSelected,
+                isRescheduleMode && styles.selectionCardLocked,
+              ]}
               onPress={() => {
+                if (isRescheduleMode) return;
                 setSelectedService(service.id);
+                setSlotAvailability({});
                 setSelectedTime(null);
                 setSelectedProfessional(null);
               }}
@@ -356,6 +446,12 @@ export default function AppointmentsScreen() {
           {selectedService && isLoadingAvailability ? (
             <Text variant="bodySmall" color="secondary" style={styles.helperText}>
               Verificando horarios indisponiveis...
+            </Text>
+          ) : null}
+
+          {isRescheduleMode ? (
+            <Text variant="bodySmall" color="secondary" style={styles.helperText}>
+              Horarios ocupados aparecem em cinza claro e nao podem ser selecionados.
             </Text>
           ) : null}
 
@@ -405,11 +501,16 @@ export default function AppointmentsScreen() {
             professionals.map((professional) => (
               <TouchableOpacity
                 key={professional.id}
+                disabled={isRescheduleMode}
                 style={[
                   styles.stylistCard,
                   selectedProfessional === professional.id && styles.stylistCardSelected,
+                  isRescheduleMode && styles.selectionCardLocked,
                 ]}
-                onPress={() => setSelectedProfessional(professional.id)}
+                onPress={() => {
+                  if (isRescheduleMode) return;
+                  setSelectedProfessional(professional.id);
+                }}
               >
                 <View style={styles.stylistInfo}>
                   <Text
@@ -513,7 +614,7 @@ export default function AppointmentsScreen() {
           ) : null}
 
           <Button
-            title="Confirmar agendamento"
+            title={isRescheduleMode ? 'Reagendar' : 'Confirmar agendamento'}
             onPress={handleBookAppointment}
             size="lg"
             style={styles.bookButton}
@@ -602,9 +703,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.primary[500],
   },
   timeCardUnavailable: {
-    backgroundColor: Colors.neutral[200],
-    borderColor: Colors.neutral[300],
-    opacity: 0.55,
+    backgroundColor: Colors.neutral[100],
+    borderColor: Colors.neutral[200],
+    opacity: 1,
   },
   serviceCard: {
     flexDirection: 'row',
@@ -619,6 +720,9 @@ const styles = StyleSheet.create({
   },
   serviceCardSelected: {
     borderColor: Colors.primary[500],
+  },
+  selectionCardLocked: {
+    opacity: 0.7,
   },
   serviceInfo: {
     flex: 1,

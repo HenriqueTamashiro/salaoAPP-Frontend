@@ -15,6 +15,13 @@ export interface UserProfile {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  client?: {
+    id: string;
+    userId: string;
+  };
+  professional?: Professional;
+  appointments?: Appointment[];
+  appointmentsTotal?: number;
 }
 
 export interface AuthResponse {
@@ -213,8 +220,15 @@ export async function listProfessionals() {
   return request<{ professionals: Professional[]; total: number }>('/professionals');
 }
 
-export async function listAvailableProfessionals(serviceId: string, date: string) {
+export async function listAvailableProfessionals(
+  serviceId: string,
+  date: string,
+  excludeAppointmentId?: string
+) {
   const params = new URLSearchParams({ serviceId, date });
+  if (excludeAppointmentId) {
+    params.set('excludeAppointmentId', excludeAppointmentId);
+  }
   return request<Professional[]>(`/professionals/available?${params.toString()}`);
 }
 
@@ -245,6 +259,18 @@ export async function acceptAppointment(token: string, appointmentId: string) {
   return request<Appointment>(`/appointments/${appointmentId}/accept`, {
     method: 'PATCH',
     token,
+  });
+}
+
+export async function rescheduleAppointment(
+  token: string,
+  appointmentId: string,
+  payload: { scheduledAt: string; notes?: string }
+) {
+  return request<Appointment>(`/appointments/${appointmentId}/reschedule`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(payload),
   });
 }
 
